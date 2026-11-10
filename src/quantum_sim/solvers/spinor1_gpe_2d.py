@@ -1,5 +1,5 @@
+
 import numpy as np
-from typing import Optional, Tuple
 
 
 class Spin1GPE2D:
@@ -83,11 +83,18 @@ class Spin1GPE2D:
         # Spinor: index 0 -> m = +1, index 1 -> m = 0, index 2 -> m = -1
         self.psi = np.zeros((3, Ny, Nx), dtype=complex)
 
+        # Cached kinetic phases, reused while dt is unchanged (the
+        # loop-invariant exp() over the grid is otherwise a dominant
+        # per-step cost).
+        self._kin_dt: complex | None = None
+        self._kin_half: np.ndarray | None = None
+        self._kin_full: np.ndarray | None = None
+
     # ------------------------------------------------------------------ #
     # State preparation
     # ------------------------------------------------------------------ #
     def initialize_polar(self, n0: float = 1.0, noise: float = 0.0,
-                         seed: Optional[int] = None):
+                         seed: int | None = None):
         """
         Prepare the polar condensate psi = sqrt(n0) (0, 1, 0) and optionally seed it
         with small complex Gaussian noise on every component (a simple stand-in for the
@@ -123,7 +130,7 @@ class Spin1GPE2D:
         """Total areal density n = |psi_+1|^2 + |psi_0|^2 + |psi_-1|^2."""
         return np.sum(np.abs(self.psi) ** 2, axis=0)
 
-    def component_densities(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def component_densities(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Densities (n_+1, n_0, n_-1) of the three magnetic components."""
         return (
             np.abs(self.psi[0]) ** 2,
@@ -131,7 +138,7 @@ class Spin1GPE2D:
             np.abs(self.psi[2]) ** 2,
         )
 
-    def spin_density(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def spin_density(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Cartesian spin density (F_x, F_y, F_z) with
             F_z = |psi_+1|^2 - |psi_-1|^2
@@ -154,19 +161,17 @@ class Spin1GPE2D:
     def energy(self) -> dict:
         """Total energy and its kinetic / density / spin / Zeeman contributions."""
         # Kinetic energy via Parseval: integral |grad psi|^2 / 2 = sum (k^2/2)|psihat|^2 * dA/(Nx Ny)
-        E_kin = 0.0
+        psihat = np.fft.fft2(self.psi, axes=(1, 2))
         norm_fft = self.dA / (self.Nx * self.Ny)
-        for m in range(3):
-            psihat = np.fft.fft2(self.psi[m])
-            E_kin += 0.5 * norm_fft * np.sum(self.k2 * np.abs(psihat) ** 2)
+        E_kin = 0.5 * norm_fft * np.sum(self.k2 * np.abs(psihat) ** 2)
 
-        n = self.total_density()
+        n1, n0, nm1 = self.component_densities()
+        n = n1 + n0 + nm1
         Fx, Fy, Fz = self.spin_density()
         F2 = Fx ** 2 + Fy ** 2 + Fz ** 2
 
         E_den = 0.5 * self.g_n * np.sum(n ** 2) * self.dA
         E_spin = 0.5 * self.g_s * np.sum(F2) * self.dA
-        n1, _, nm1 = self.component_densities()
         E_zee = self.q * np.sum(n1 + nm1) * self.dA
 
         E_total = E_kin + E_den + E_spin + E_zee
@@ -181,11 +186,19 @@ class Spin1GPE2D:
     # ------------------------------------------------------------------ #
     # Time stepping
     # ------------------------------------------------------------------ #
-    def _kinetic_half_step(self, dt: complex):
-        """Apply exp(-i (k^2/2) dt/2) to every component in Fourier space."""
-        phase = np.exp(-0.5j * (self.k2 / 2.0) * dt)
-        for m in range(3):
-            self.psi[m] = np.fft.ifft2(np.fft.fft2(self.psi[m]) * phase)
+    def _kinetic_phases(self, dt: complex):
+        """Half- and full-step kinetic phases, cached while dt is unchanged."""
+        if dt != self._kin_dt:
+            self._kin_half = np.exp(-0.25j * self.k2 * dt)
+            self._kin_full = self._kin_half ** 2
+            self._kin_dt = dt
+        return self._kin_half, self._kin_full
+
+    def _apply_kinetic(self, phase: np.ndarray):
+        """Multiply every component by ``phase`` in Fourier space."""
+        psihat = np.fft.fft2(self.psi, axes=(1, 2))
+        psihat *= phase
+        self.psi = np.fft.ifft2(psihat, axes=(1, 2))
 
     def _apply_spin_f(self, p1, p0, m1, Fz, Fp, Fm):
         """
@@ -243,14 +256,11 @@ class Spin1GPE2D:
         The density phase is a global scalar (commutes with everything); the q term is
         diagonal, acting only on the m = +-1 components (f_z^2 = diag(1, 0, 1)).
         """
-        # Density phase exp(-i g_n n dt) on all components
+        # Density phase exp(-i g_n n dt) on all components (broadcast over spin)
         n = self.total_density()
-        phase_n = np.exp(-1j * self.g_n * n * dt)
-        self.psi[0] *= phase_n
-        self.psi[1] *= phase_n
-        self.psi[2] *= phase_n
+        self.psi *= np.exp(-1j * self.g_n * n * dt)
 
-        # Half quadratic-Zeeman phase on m = +-1
+        # Half quadratic-Zeeman phase on m = +-1 (scalar; f_z^2 = diag(1, 0, 1))
         phase_q = np.exp(-0.5j * self.q * dt)
         self.psi[0] *= phase_q
         self.psi[2] *= phase_q
@@ -267,6 +277,24 @@ class Spin1GPE2D:
         Advance one symmetric split-step of size dt (kinetic / local / kinetic).
         Pass a real dt for real-time quench dynamics.
         """
-        self._kinetic_half_step(dt)
+        half, _ = self._kinetic_phases(dt)
+        self._apply_kinetic(half)
         self._local_step(dt)
-        self._kinetic_half_step(dt)
+        self._apply_kinetic(half)
+
+    def evolve(self, dt: complex, n_steps: int):
+        """
+        Advance ``n_steps`` split steps of size dt, fusing the back-to-back
+        kinetic half-steps of adjacent steps into single full steps. This is
+        exactly equivalent to calling ``step(dt)`` n_steps times but does
+        roughly half the FFT work; use it between observation points.
+        """
+        if n_steps <= 0:
+            return
+        half, full = self._kinetic_phases(dt)
+        self._apply_kinetic(half)
+        self._local_step(dt)
+        for _ in range(n_steps - 1):
+            self._apply_kinetic(full)
+            self._local_step(dt)
+        self._apply_kinetic(half)

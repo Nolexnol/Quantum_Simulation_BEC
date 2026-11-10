@@ -1,0 +1,56 @@
+# ---------------------------------------------------------------------------
+# Measured apparatus constants and per-dataset acquisition settings.
+#
+# These are DATA, not code: every number here was measured in the lab, and a
+# change to one should be reviewable on its own without reading Python. Code
+# reads them through `quantum_sim.config`; nothing hard-codes them.
+#
+# If you re-measure the camera scale, change it HERE and nowhere else.
+# ---------------------------------------------------------------------------
+
+# Defaults inherited by every dataset unless it overrides them.
+calibration:
+  camera: cam6              # absorption-imaging camera used for the box
+  pixel_um: 0.66            # camera scale [um/px]
+  rotation_deg: 45.0        # box sits diamond-wise in the raw frame [deg]
+  time_index: 6             # swept element of BEC_TIME_SEQ [s]
+  window_alpha: 0.5         # Tukey taper used for domain-length estimates
+  clip_percentile: 99.5     # robust colour-scale limit for figures
+
+# Apparatus physics, in SI-friendly laboratory units.
+apparatus:
+  box_side_um: 112.9        # box side at half-max density (measured)
+  sheet_trap_hz: 2000.0     # vertical sheet-trap frequency [Hz]
+  xi_spin_um: 2.0           # spin healing length / domain-wall width [um]
+  n_areal_per_um2: 100.0    # areal density [atoms/um^2]
+
+# Each dataset names a directory under data/raw/ plus how it was framed.
+datasets:
+  coarsening:
+    path: coarsening_data
+    description: >
+      23Na F=1 / F=2 binary mixture quenched in the 113 um box, 2026-07-17.
+      Fixed rectangular crop; one shot per hold time plus repeats.
+    crop_box: [130, 400, 105, 380]   # rows[0:2], cols[2:4] around the cloud
+
+  box40ms:
+    path: 2026-07-27_40ms
+    description: 40 ms hold-time series in the same box, 2026-07-27.
+    crop_box: [130, 400, 105, 380]
+
+  shots700p:
+    path: 700p_shots/2026_08_19
+    description: >
+      ~750-shot ensemble, 2026-08-19. Framed by centroid rather than a fixed
+      box because the cloud drifts across the run.
+    crop_half: 130                   # half-width of the square cut about the centroid
+    max_time_ms: 800.0
+
+  sep11:
+    path: "2026-09-11"                # quoted, or YAML reads it as a date
+    description: >
+      ~730-shot ensemble, 2026-09-11. Same box and imaging as shots700p;
+      24 hold times from 0 to 2000 ms, 26-30 shots per time. 39 files (the
+      last rep of each run) were aborted and have no /images group.
+    crop_half: 130
+    max_time_ms: 2000.0

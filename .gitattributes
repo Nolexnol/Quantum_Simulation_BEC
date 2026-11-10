@@ -1,0 +1,8 @@
+# Notebooks are JSON: let git treat them as text but never try to merge them.
+*.ipynb  -merge -diff linguist-documentation
+
+# Keep line endings sane across machines.
+*.py     text eol=lf
+*.md     text eol=lf
+*.yaml   text eol=lf
+*.toml   text eol=lf

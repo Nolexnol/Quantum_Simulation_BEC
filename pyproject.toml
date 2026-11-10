@@ -4,18 +4,42 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quantum_sim"
-version = "0.1.0"
-description = "Split-step Fourier solver for a two-component (spinor) Gross-Pitaevskii equation."
+version = "0.3.0"
+description = "Gross-Pitaevskii solvers and the coarsening-analysis pipeline for spinor and binary Bose-Einstein condensates."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { text = "MIT" }
+
+# The previous list declared only numpy and matplotlib while the code imported
+# scipy, h5py, peewee and more, so a fresh clone failed at import. Core = what
+# `import quantum_sim` and the simulation scripts actually need.
 dependencies = [
     "numpy>=1.24",
+    "scipy>=1.10",
     "matplotlib>=3.7",
+    "h5py>=3.9",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4"]
+# Reading the lab's shot index.
+db = [
+    "peewee>=3.17",
+    "tqdm>=4.66",
+]
+# Notebook work: progress bars, parallel shot loading.
+notebook = [
+    "jupyterlab>=4.0",
+    "ipywidgets>=8.1",
+    "multiprocess>=0.70",
+    "nbstripout>=0.7",
+]
+dev = [
+    "pytest>=7.4",
+    "pytest-cov>=4.1",
+    "ruff>=0.5",
+]
+all = ["quantum_sim[db,notebook,dev]"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -23,4 +47,34 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = "-ra"
+addopts = "-ra --strict-markers"
+markers = [
+    "slow: takes more than a few seconds",
+    "needs_data: requires raw shot files under data/raw/",
+]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "scripts", "tests"]
+target-version = "py310"
+# Notebooks are exploration: lint the library and the scripts, not the sketches.
+extend-exclude = ["notebooks", "*.ipynb", "venv"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes — catches the unused/undefined names that hid real bugs here
+    "I",        # isort
+    "B",        # bugbear
+    "UP",       # pyupgrade
+]
+ignore = [
+    "E501",     # long lines: physics expressions read worse when wrapped
+    "B008",     # function call in default argument
+    "B905",     # zip(strict=): lengths here are structural, not a runtime risk
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Scripts must choose the matplotlib backend before importing pyplot, so their
+# imports cannot all sit at the top of the file.
+"scripts/**" = ["E402"]
